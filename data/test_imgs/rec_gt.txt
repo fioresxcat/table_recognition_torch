@@ -1,0 +1,16 @@
+crop_img/1_crop_0.jpg	Product
+crop_img/1_crop_1.jpg	Quantity
+crop_img/1_crop_2.jpg	CNF HCMC Port
+crop_img/1_crop_3.jpg	Item no.
+crop_img/1_crop_4.jpg	Description
+crop_img/1_crop_5.jpg	+/-3%
+crop_img/1_crop_6.jpg	Price
+crop_img/1_crop_7.jpg	Amount
+crop_img/1_crop_8.jpg	1
+crop_img/1_crop_9.jpg	(M0000438)
+crop_img/1_crop_10.jpg	100,000
+crop_img/1_crop_11.jpg	0.035
+crop_img/1_crop_12.jpg	3,500.00
+crop_img/1_crop_13.jpg	TotaI CNF HOCHIMINH
+crop_img/1_crop_14.jpg	3,500.00
+crop_img/1_crop_15.jpg	Say in words: U.S.Dollars Three Thousand Five Hundred only

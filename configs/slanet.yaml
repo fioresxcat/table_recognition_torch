@@ -1,0 +1,95 @@
+model:
+  backbone:
+    name: PPLCNet
+    in_channel: 3
+    scale: 1.0
+  neck:
+    name: CSPPAN
+    list_in_c: [64, 128, 256, 512]
+    out_c: 96
+    kernel_size: 5
+    num_csp_blocks: 1
+    use_depthwise: true
+    act: 'hard_swish'
+  head:
+    name: SLAHead
+    list_in_c: [96, 96, 96, 96]
+    hidden_size: 256 
+    out_c: 30
+    max_text_length: 500
+    loc_reg_num: 4
+    fc_decay: 0.0
+  pretrained: slanet_pretrained.pt
+
+data:
+  dataset:
+    train:
+      name: PubTabDataset
+      data_dir: data/test_data
+      anno_path: data/test_data/anno_train.jsonl
+
+    val:
+      name: PubTabDataset
+      data_dir: data/test_data
+      anno_path: data/test_data/anno_train.jsonl
+
+    transforms:
+      - DecodeImage: # load image
+          img_mode: BGR
+          channel_first: false
+      - TableLabelEncode:  # get absolute box 
+          max_text_length: ${model.head.max_text_length}
+          character_dict_path: data/table_structure_dict.txt
+          learn_empty_box: false
+          merge_no_span_structure: true
+          replace_empty_cell_token: false
+          loc_reg_num: 4 
+      - TableBoxEncode:   # convert box format and normalize box coord in range(0, 1)
+          in_box_format: xyxy
+          out_box_format: xyxy
+      - ResizeTableImage:  # resize preserve aspect ratio, no padding
+          max_len: 488
+          resize_bboxes: false  # because bb is normalized, no need to resize
+      - NormalizeImage:
+          scale: 1./255.
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]
+          order: 'hwc'
+      - PaddingTableImage:  # pad image at the right and bottom to make it square. After this padding, the normalized box coord is no longer true
+          size: [488, 488]
+      - ToCHWImage:
+      - KeepKeys:
+          keep_keys: ['image', 'structure', 'padding_mask', 'bboxes', 'bbox_masks', 'shape']
+
+    augmentations: []
+
+  loader:
+    shuffle: False
+    drop_last: False
+    batch_size: 9
+    num_workers: 0
+
+optimizer:
+  name: AdamW
+  lr: 0.001
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+
+
+scheduler:
+  name: CosineAnnealingLR
+  T_max: ${trainer.max_epochs}
+  eta_min: 1e-6
+
+loss:
+  name: SLALoss
+  structure_weight: 1.0
+  loc_weight: 2.0
+  loc_loss: 'l1'
+
+trainer:
+  ckpt_dir: ckpt/slanet/exp8_same_as_exp7_but_full_9_images
+  max_epochs: 300
+  min_epochs: 30
+  device: cuda:7
+  log_interval: 2  # step
