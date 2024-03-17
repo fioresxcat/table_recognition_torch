@@ -192,7 +192,7 @@ class TableLabelEncode(AttnLabelEncode):
         padding_mask = [1] * len(structure) + [0] * (self._max_text_len - len(structure))  # pad
         structure = structure + [self.pad_idx] * (self._max_text_len - len(structure))  # pad
         structure = np.array(structure)
-        padding_mask = np.array(padding_mask)
+        padding_mask = np.array(padding_mask)   # mark the padding tokens (not counting the bos and eos token)
         data['structure'] = structure
         data['padding_mask'] = padding_mask
 
@@ -214,8 +214,8 @@ class TableLabelEncode(AttnLabelEncode):
                     bbox_masks[i] = 1.0
                 bbox_idx += 1
                 
-        data['bboxes'] = bboxes
-        data['bbox_masks'] = bbox_masks
+        data['bboxes'] = bboxes  # shape (max_text_len, 4), with batch it'll have shape (bs, max_text_len, 4)
+        data['bbox_masks'] = bbox_masks  # shape (max_text_len, 1), with batch it'll have shape (bs, max_text_len, 1)
         return data
 
 

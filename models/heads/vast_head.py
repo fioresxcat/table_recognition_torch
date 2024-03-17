@@ -8,6 +8,9 @@ from einops import rearrange, repeat, reduce
 from easydict import EasyDict
 import math
 from copy import deepcopy
+import torchvision
+from utils import to_abs_coord
+
 
 
 class ResBlock(nn.Module):
@@ -150,11 +153,14 @@ class VastHead(nn.Module):
         self.global_config = config
         self.config = config.model.head
         self.fea_pe = SinusoidalPositionalEncoding(d_model=self.config.d_model, max_seq_len=38*38)
+
         self.html_emb = TokenEmbedding(vocab_size=self.config.vocab_size, d_model=self.config.d_model)
         self.html_decoder = Decoder(config=self.config.html_decoder)
+
         self.coord_emb = TokenEmbedding(vocab_size=self.config.n_bins, d_model=self.config.d_model)
         self.coord_decoder = Decoder(config=self.config.coord_decoder)
 
+        self.fea_proj = nn.Linear(config.d_model*2*2, config.d_model)
 
 
     def forward(self, inputs, labels=None):
@@ -164,26 +170,27 @@ class VastHead(nn.Module):
             -> feature map size = 38 x 38
         """
         # flatten the feature map and and position encoding
-        html_out, coord_out, html_hidden = None, None, None
+        html_out, coord_out, html_hidden, roi_features = None, None, None, None
 
-        fea = deepcopy(inputs[0])
+        fea = inputs[0]
         bs = fea.size(0)  # get the batch size
-        fea = rearrange(fea, 'b c h w -> b (h w) c')
-        fea = self.fea_pe(fea)
+        fea_flatten = rearrange(fea, 'b c h w -> b (h w) c')
+        fea_flatten = self.fea_pe(fea_flatten)
 
         if self.train and labels is not None:
-            # compute html output
+            # ------------------------ compute html output ----------------------------
             html_indices = labels['html_target'][:, :-1]  # shape (batch_size, max_seq_len+1)
             html_emb = self.html_emb(html_indices)  # shape (batch_size, max_seq_len+1, d_model)
-            causal_mask = torch.triu(torch.ones((html_indices.size(0), html_indices.size(1), html_indices.size(1))), diagonal=1).bool().to(fea.device)
-            html_hidden, html_out = self.html_decoder(x=html_emb, enc_out=fea, src_mask=None, tgt_mask=causal_mask)  # shape (batch_size, max_seq_len+1, d_model)
-            # compute box output
+            causal_mask = torch.triu(torch.ones((html_indices.size(0), html_indices.size(1), html_indices.size(1))), diagonal=1).bool().to(fea_flatten.device)
+            html_hidden, html_out = self.html_decoder(x=html_emb, enc_out=fea_flatten, src_mask=None, tgt_mask=causal_mask)  # shape (batch_size, max_seq_len+1, d_model)
+
+            # ------------------------ compute box output ----------------------------------
             coord_indices = labels['coord_target'][:, :, :-1]  # shape (batch_size, max_seq_len + 1, 3)
             coord_indices = rearrange(coord_indices, 'b l d -> (b l) d')  # shape (batch_size * (max_seq_len+1), 3)
             coord_emb = self.coord_emb(coord_indices)  # shape (batch_size * (max_seq_len+1), 3, d_model)
             coord_emb = torch.concat([rearrange(html_hidden, 'b l d -> (b l) 1 d'), coord_emb], dim=1)  # shape (bs*(max_seq_len+1), 4, d_model)
-            fea_repeat = repeat(fea, 'b l d -> (b n) l d', n=coord_emb.size(0) // fea.size(0))   # n = max_seq_len, shape (batch_size * max_seq_len, h*w, d_model)
-            causal_mask = torch.triu(torch.ones((coord_emb.size(0), coord_emb.size(1), coord_emb.size(1))), diagonal=1).bool().to(fea.device)  # shape (bs*max_seq_len, 4, 4)
+            fea_repeat = repeat(fea_flatten, 'b l d -> (b n) l d', n=coord_emb.size(0) // fea_flatten.size(0))   # n = max_seq_len, shape (batch_size * max_seq_len, h*w, d_model)
+            causal_mask = torch.triu(torch.ones((coord_emb.size(0), coord_emb.size(1), coord_emb.size(1))), diagonal=1).bool().to(fea_flatten.device)  # shape (bs*max_seq_len, 4, 4)
             # query: coord_emb, shape (batch_size * max_seq_len, 4, d_model)
             # key: fea_repeat, shape (batch_size * max_seq_len, h*w, d_model)
             # value: fea_repeat, shape (batch_size * max_seq_len, h*w, d_model)
@@ -195,18 +202,33 @@ class VastHead(nn.Module):
             # and the label return from data loader will have shape (batch_size * max_seq_len * 4)
             # then feed the two in the cross entropy loss function
 
+            # ------------------------- compute roi-pooling output --------------------------
+            bboxes = labels['bboxes']  # shape (batch_size, max_seq_len, 4)
+            input_h, input_w = labels['shape'][:2]
+            bboxes_mask = labels['bboxes_mask']  # shape (batch_size, max_seq_len, 1)
+            roi_bboxes = []
+            for batch_idx, bbs in enumerate(bboxes):
+                for bb_idx, bb in enumerate(bbs):
+                    if bboxes_mask[batch_idx][bb_idx] == 1:
+                        x1, y1, x2, y2 = to_abs_coord(bb, [input_h, input_w]) # coord on the input image (488, 488, 3)
+                        roi_bboxes.append([batch_idx, x1, y1, x2, y2])
+            roi_bboxes = torch.tensor(roi_bboxes).float().to(fea.device)
+            roi_pools = torchvision.ops.roi_align(fea, roi_bboxes, (2, 2))  # shape (num_total_rois_in_the_batch, d_model, 2, 2)
+            roi_pools = rearrange(roi_pools, 'b d h w -> b (d h w)')
+            roi_features = self.fea_proj(roi_pools)  # shape (num_total_rois_in_the_batch, d_model)
+
         else:  # auto-regressive decoding
             # decode html sequence
-            pre_chars = torch.zeros((bs, 1), dtype=torch.long).to(fea.device)
+            pre_chars = torch.zeros((bs, 1), dtype=torch.long).to(fea_flatten.device)
             for i in range(self.config.max_seq_len+1):
                 emb = self.html_emb(pre_chars)  # shape (bs, 1, d_model)
-                html_hidden, html_out = self.html_decoder(x=emb, enc_out=fea, src_mask=None, tgt_mask=None)  # shape (bs, i+1, d_model)
+                html_hidden, html_out = self.html_decoder(x=emb, enc_out=fea_flatten, src_mask=None, tgt_mask=None)  # shape (bs, i+1, d_model)
                 cur_chars = torch.argmax(html_out, dim=-1)[:, -1:]  # shape (batch_size, 1)
                 pre_chars = torch.concat([pre_chars, cur_chars], dim=1)  # shape (batch_size, i+2)
             # decode coord sequence
             init_coord_emb = rearrange(html_hidden, 'b l d -> (b l) 1 d')  # shape (bs*max_seq_len, 1, d_model)
             pre_coords = torch.empty(bs*html_out.shape[1], 0, dtype=torch.long)
-            fea_repeat = repeat(fea, 'b l d -> (b n) l d', n=init_coord_emb.size(0) // fea.size(0))   # n = max_seq_len, shape (batch_size * max_seq_len, h*w, d_model)
+            fea_repeat = repeat(fea_flatten, 'b l d -> (b n) l d', n=init_coord_emb.size(0) // fea_flatten.size(0))   # n = max_seq_len, shape (batch_size * max_seq_len, h*w, d_model)
             for i in range(4):
                 if pre_coords.shape[1] == 0:
                     pre_coords_emb = init_coord_emb
@@ -222,7 +244,7 @@ class VastHead(nn.Module):
             'html_out': html_out,
             'coord_out': coord_out,
             'html_hidden': html_hidden,
-            'fea': inputs[0],
+            'roi_features': roi_features,
         }
     
 
