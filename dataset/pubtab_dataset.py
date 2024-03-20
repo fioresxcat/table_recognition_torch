@@ -20,7 +20,7 @@ class PubTabDataset(Dataset):
         self.anno_path = self.config.dataset[mode].anno_path
         self.data_dir = self.config.dataset[mode].data_dir
         self.data_lines = self.get_image_info_list(self.anno_path)
-        self.check(self.global_config.model.head.max_text_length)
+        self.check(self.global_config.common.max_seq_len)
         self.ops = DataTranformer(self.config.dataset.transforms)
 
 

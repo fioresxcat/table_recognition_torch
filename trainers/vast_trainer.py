@@ -1,11 +1,11 @@
 from .base_trainer import *
 
+
 class VastTrainer(BaseTrainer):
     def __init__(self, config):
         super().__init__(config)
 
     
-
     def train(self):
         # get training config
         train_cfg = self.config.trainer
@@ -30,9 +30,9 @@ class VastTrainer(BaseTrainer):
                     if isinstance(v, torch.Tensor):
                         batch[k] = v.to(self.device)
                 imgs = batch['image']
-                preds = self.model(imgs, labels=batch)
-                loss = self.loss({'structure_logits': structure_logits, 'loc_preds': loc_preds}, batch)
-                total_loss, structure_loss, loc_loss = loss['total_loss'], loss['structure_loss'], loss['loc_loss']
+                pred = self.model(imgs, labels=batch)
+                loss = self.loss(pred, batch)
+                total_loss, html_loss, coord_loss, visual_align_loss = loss['total_loss'], loss['html_loss'], loss['coord_loss'], loss['visual_align_loss']
                 # gradient descent
                 self.optimizer.zero_grad()  # need to zero the gradients because pytorch accumulates them by default
                 total_loss.backward()  # compute gradients of the loss w.r.t. the parameters
@@ -41,7 +41,11 @@ class VastTrainer(BaseTrainer):
 
                 current_lr = self.optimizer.param_groups[0]['lr']
                 if i % train_cfg.log_interval == 0:
-                    print(f"Epoch {ep}, Batch {i}, LR {current_lr:.4f}, Total Loss {format(total_loss.cpu().item(), '.3f')}, Structure Loss {format(structure_loss.cpu().item(), '.3f')}, Loc Loss {format(loc_loss.cpu().item(), '.3f')}")
+                    print(f"Epoch {ep}, Batch {i}, LR {current_lr:.4f},  \
+                          Total Loss {total_loss.cpu().item():.3f},  \
+                          Structure Loss {html_loss.cpu().item():.3f},   \
+                          Coord Loss {coord_loss.cpu().item():.3f}, \
+                          Visual Align Loss {visual_align_loss.cpu().item():.3f}")
             
             # validation loop
             self.model.eval()
@@ -52,12 +56,12 @@ class VastTrainer(BaseTrainer):
                         batch[k] = v.to(self.device)
                 imgs = batch['image']
                 with torch.no_grad():
-                    structure_logits, loc_preds = self.model(imgs)
-                loss = self.loss({'structure_logits': structure_logits, 'loc_preds': loc_preds}, batch)
-                loss = loss['total_loss']
-                val_loss += loss.cpu().item()
+                    pred = self.model(imgs, labels=None)
+                loss = self.loss(pred, batch)
+                total_loss = loss['total_loss']
+                val_loss += total_loss.cpu().item()
             val_loss = val_loss / len(self.val_loader)
-            print(f"Epoch {ep}, Val Loss {loss:.3f}")        
+            print(f"Epoch {ep}, Val Loss {val_loss:.3f}")        
 
             # save checkpoint
             if val_loss < best_val_loss:
@@ -69,3 +73,4 @@ class VastTrainer(BaseTrainer):
                     self.model.state_dict(), 
                     os.path.join(train_cfg.ckpt_dir, f'best_model-val_loss={val_loss:.3f}.pt')
                 )
+

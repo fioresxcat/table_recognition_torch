@@ -13,13 +13,13 @@ class PaddingTableImage(object):
 
     def __call__(self, data):
         img = data['image']
-        pad_h, pad_w = self.size
-        padding_img = np.zeros((pad_h, pad_w, 3), dtype=np.float32)
+        new_h, new_w = self.size
+        padding_img = np.zeros((new_h, new_w, 3), dtype=np.float32)
         height, width = img.shape[0:2]
         padding_img[0:height, 0:width, :] = img.copy()
         data['image'] = padding_img
         shape = data['shape'].tolist()
-        shape.extend([pad_h, pad_w])
+        shape.extend([new_h, new_w])
         data['shape'] = np.array(shape)
         return data
 
@@ -44,6 +44,8 @@ class ResizeTableImage(object):
         resize_img = cv2.resize(img, (resize_w, resize_h))
         if self.resize_bboxes and not self.infer_mode:
             data['bboxes'] = data['bboxes'] * ratio
+        data['abs_bboxes'] = data['bboxes'] * np.array([resize_w, resize_h, resize_w, resize_h])
+        data['abs_bboxes'] = data['abs_bboxes'].astype(np.int32)
         data['image'] = resize_img
         data['src_img'] = img
         data['shape'] = np.array([height, width, ratio, ratio])

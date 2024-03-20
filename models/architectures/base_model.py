@@ -34,8 +34,8 @@ class BaseModel(nn.Module):
     def _build_head(self):
         cfg = self.config.head
         class_name = cfg.name
-        init_args = {k: v for k, v in cfg.items() if k != 'name'}
-        self.head = eval(class_name)(**init_args)
+        # init_args = {k: v for k, v in cfg.items() if k != 'name'}
+        self.head = eval(class_name)(self.config)
 
 
     def forward(self, x, labels=None):

@@ -63,7 +63,7 @@ class BaseTrainer:
     def build_loss(self):
         loss_name = self.config.loss.name
         loss_cfg = {k:v for k, v in self.config.loss.items() if k != 'name'}
-        self.loss = eval(loss_name)(**loss_cfg)
+        self.loss = eval(loss_name)(self.config.loss)
 
 
     def build_postprocessor(self):
@@ -92,17 +92,3 @@ class BaseTrainer:
 
     def overfit_random_input():
         pass
-
-
-if __name__ == '__main__':
-    # get command line args
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/slanet.yaml")
-    args = parser.parse_args()
-
-    # load config
-    config = EasyDict(omegaconf.OmegaConf.load(args.config))
-
-    # train
-    trainer = BaseTrainer(config)
-    trainer.train()

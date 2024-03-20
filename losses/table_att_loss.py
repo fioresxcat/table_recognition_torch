@@ -41,7 +41,7 @@ class SLALoss(nn.Module):
         structure_logits = predicts['structure_logits']
         structure_targets = batch['structure'].to(torch.int64)
         padding_masks = batch['padding_mask'].to(torch.int64)
-        padding_masks = padding_masks[:, 1:]
+        padding_masks = padding_masks[:, 1:]  # (bs, max_text_length)
         structure_targets = structure_targets[:, 1:]  # (bs, max_text_length)
         structure_targets = torch.where(padding_masks == 1, structure_targets, -100)        
         structure_loss = self.loss_func(
